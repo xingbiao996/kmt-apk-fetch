@@ -1,26 +1,31 @@
 name: fetch-kmt-apk
 on:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Try 1 - apkeep from Google Play
+      - name: Try 1 - apkeep from Google Play (latest version)
         continue-on-error: true
         run: |
           set -e
           mkdir -p out
           VER=$(curl -s https://api.github.com/repos/EFForg/apkeep/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
-          curl -sfL -o apkeep.tar.gz "https://github.com/EFForg/apkeep/releases/download/${VER}/apkeep-x86_64-unknown-linux-gnu.tar.gz"
+          echo "apkeep version: $VER"
+          curl -sfL -o apkeep.tar.gz "https://github.com/EFForg/apkeep/releases/download/${VER}/apkeep-x86_64-unknown-linux-gnu.tar.gz" \
+            || curl -sfL -o apkeep.tar.gz "https://github.com/EFForg/apkeep/releases/download/${VER}/apkeep-x86_64-unknown-linux-musl.tar.gz"
           tar xzf apkeep.tar.gz apkeep
-          if ./apkeep -a com.DLTech.KMT -d play out; then
+          if ./apkeep -a com.DLTech.KMT -d play out && ls out/*.apk >/dev/null 2>&1; then
             echo "SOURCE=play" >> "$GITHUB_ENV"
           else
-            echo "apkeep failed, will try fallbacks"
+            echo "apkeep failed, will try fallback"
+            rm -f out/*.apk || true
+            exit 1
           fi
-          ls -la out/ || true
 
-      - name: Try 2 - apkpure official API (api.pureapk.com)
+      - name: Try 2 - apkpure official API fallback
         if: ${{ env.SOURCE != 'play' }}
         run: |
           set -e
@@ -28,13 +33,12 @@ jobs:
           RESP=$(curl -sf -H 'x-sv: 29' -H 'x-abis: arm64-v8a,armeabi-v7a,armeabi' -H 'x-gp: 1' \
             "https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name=com.DLTech.KMT" || true)
           LINK=$(printf '%s' "$RESP" | grep -oE 'https:[^"]+/APK[^"]*' | head -1)
-          echo "link=$LINK"
           if [ -n "$LINK" ]; then
             curl -sfL -D headers.txt -o out/com.DLTech.KMT.apk "$LINK"
             grep -i content-disposition headers.txt || true
             echo "SOURCE=pureapk" >> "$GITHUB_ENV"
           else
-            echo "no link found in response:"; printf '%s' "$RESP" | head -c 800
+            echo "no link found"; printf '%s' "$RESP" | head -c 500
             exit 1
           fi
 
@@ -44,20 +48,13 @@ jobs:
           APK=$(ls out/*.apk | head -1)
           echo "APK=$APK" >> "$GITHUB_ENV"
           test -s "$APK"
+          sha256sum "$APK"
           python3 - <<EOF
           import zipfile
           z = zipfile.ZipFile("$APK")
-          names = z.namelist()
-          print("entries:", len(names))
-          assert "AndroidManifest.xml" in names, "not an apk"
-          import re
-          data = z.read("AndroidManifest.xml")
-          print("binary manifest bytes:", len(data))
-          # crude package sniff on binary xml string pool
-          m = re.findall(rb"com\.[A-Za-z0-9.]{3,40}", data)
-          print("pkg-like strings:", set(x.decode() for x in m[:20]))
+          assert "AndroidManifest.xml" in z.namelist(), "not an apk"
+          print("entries:", len(z.namelist()))
           EOF
-          sha256sum "$APK"
 
       - name: Create release with asset
         uses: softprops/action-gh-release@v2
@@ -66,7 +63,7 @@ jobs:
           name: KMT app APK (com.DLTech.KMT)
           files: ${{ env.APK }}
           body: >
-            Fetched from Google Play source (method: ${{ env.SOURCE }}).
-            Package com.DLTech.KMT, developer 社團法人中國國民黨.
+            Fetched via ${{ env.SOURCE }} for package com.DLTech.KMT
+            (China Kuomintang Digital Party app, developer 社團法人中國國民黨).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
