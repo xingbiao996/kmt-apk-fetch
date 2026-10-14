@@ -12,10 +12,10 @@ jobs:
         run: |
           set -e
           mkdir -p out
-          URL=$(curl -s https://api.github.com/repos/EFForg/apkeep/releases/latest | python3 -c "import sys,json;a=json.load(sys.stdin)['assets'];print(next(x['browser_download_url'] for x in a if 'linux' in x['name'] and 'gnu' in x['name']))")
+          URL=$(curl -s https://api.github.com/repos/EFForg/apkeep/releases/latest | python3 -c "import sys,json;a=json.load(sys.stdin)['assets'];print(next(x['browser_download_url'] for x in a if x['name']=='apkeep-x86_64-unknown-linux-gnu'))")
           echo "asset: $URL"
-          curl -sfL -o apkeep.tar.gz "$URL"
-          tar xzf apkeep.tar.gz apkeep
+          curl -sfL -o apkeep "$URL"
+          chmod +x apkeep
           if ./apkeep -a com.DLTech.KMT -d play out && ls out/*.apk >/dev/null 2>&1; then
             echo "SOURCE=play" >> "$GITHUB_ENV"
           else
